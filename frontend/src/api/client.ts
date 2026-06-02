@@ -1,0 +1,27 @@
+import { API_BASE_URL } from "@/lib/constants";
+import type { PRFilters, PRListResponse, PullRequestDetail } from "@/types/pull-request";
+
+async function apiClient<T>(endpoint: string): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`);
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchPullRequests(filters: PRFilters): Promise<PRListResponse> {
+  const params = new URLSearchParams({
+    branch_type: filters.branch_type,
+    sort_by: filters.sort_by,
+    sort_order: filters.sort_order,
+  });
+  return apiClient<PRListResponse>(`/api/v1/pull-requests?${params}`);
+}
+
+export async function fetchPRDetail(prNumber: number): Promise<PullRequestDetail> {
+  return apiClient<PullRequestDetail>(`/api/v1/pull-requests/${prNumber}`);
+}
+
+export async function fetchHealthCheck(): Promise<{ status: string }> {
+  return apiClient<{ status: string }>("/api/v1/health");
+}
