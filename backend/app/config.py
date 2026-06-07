@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Optional: Excluded members (comma-separated) — people on GitHub team but not on project team
     excluded_team_members: Optional[str] = None
 
+    # Phase 2: Team approvals
+    required_team_approvals: int = 2
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",")]

@@ -3,6 +3,7 @@ import type { PullRequest, SortField, SortOrder } from "@/types/pull-request";
 import { AgeBadge } from "./AgeBadge";
 import { BranchTypeBadge } from "./BranchTypeBadge";
 import { CodeOwnerBadge } from "./CodeOwnerBadge";
+import { TeamApprovalsBadge } from "./TeamApprovalsBadge";
 import { TableSkeleton } from "./TableSkeleton";
 
 interface PRTableProps {
@@ -67,6 +68,7 @@ export function PRTable({
               onSort={onSort}
             />
             <th className="px-4 py-3 text-left font-medium text-gray-600">Code Owner</th>
+            <th className="px-4 py-3 text-left font-medium text-gray-600">Team Approvals</th>
             <th className="px-4 py-3 text-left font-medium text-gray-600">Link</th>
           </tr>
         </thead>
@@ -82,8 +84,21 @@ export function PRTable({
               <td className="px-4 py-3 font-mono text-xs text-gray-500">
                 #{pr.number}
               </td>
-              <td className="max-w-xs truncate px-4 py-3 font-medium text-gray-900">
-                {pr.title}
+              <td className="max-w-xs px-4 py-3 font-medium text-gray-900">
+                <div className="flex items-center gap-2 truncate">
+                  <span className="truncate">{pr.title}</span>
+                  {pr.unresolved_comment_count > 0 && (
+                    <span
+                      className={`inline-flex shrink-0 items-center gap-0.5 text-xs font-medium ${
+                        pr.unresolved_comment_count >= 5
+                          ? "text-red-600"
+                          : "text-amber-600"
+                      }`}
+                    >
+                      💬 {pr.unresolved_comment_count}
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2">
@@ -106,6 +121,9 @@ export function PRTable({
               </td>
               <td className="px-4 py-3">
                 <CodeOwnerBadge status={pr.code_owner_status} branchType={pr.branch_type} />
+              </td>
+              <td className="px-4 py-3">
+                <TeamApprovalsBadge teamApprovals={pr.team_approvals} />
               </td>
               <td className="px-4 py-3">
                 <a

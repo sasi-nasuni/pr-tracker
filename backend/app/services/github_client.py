@@ -113,6 +113,72 @@ class GitHubClient:
             response.raise_for_status()
             return response.json()
 
+    async def get_review_threads(self, pr_number: int) -> list[dict[str, Any]]:
+        """Fetch review threads for a PR using the GraphQL API.
+
+        Returns a list of thread dicts with:
+          - id, isResolved, comments (first comment body, author, path, line, url)
+        """
+        query = """
+        query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $prNumber) {
+              reviewThreads(first: 100, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 1) {
+                    nodes {
+                      author { login }
+                      body
+                      path
+                      line
+                      url
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        threads: list[dict[str, Any]] = []
+        cursor: str | None = None
+
+        async with self._client() as client:
+            while True:
+                variables = {
+                    "owner": settings.github_org,
+                    "repo": settings.github_repo,
+                    "prNumber": pr_number,
+                    "cursor": cursor,
+                }
+                response = await client.post(
+                    "https://api.github.com/graphql",
+                    json={"query": query, "variables": variables},
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                review_threads = (
+                    data.get("data", {})
+                    .get("repository", {})
+                    .get("pullRequest", {})
+                    .get("reviewThreads", {})
+                )
+
+                nodes = review_threads.get("nodes", [])
+                threads.extend(nodes)
+
+                page_info = review_threads.get("pageInfo", {})
+                if page_info.get("hasNextPage"):
+                    cursor = page_info["endCursor"]
+                else:
+                    break
+
+        return threads
+
 
 # Singleton instance
 github_client = GitHubClient()

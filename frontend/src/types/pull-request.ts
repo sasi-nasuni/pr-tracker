@@ -33,6 +33,26 @@ export interface ReviewerInfo {
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
 }
 
+export interface TeamApprovalEntry {
+  username: string;
+  has_approved: boolean;
+}
+
+export interface TeamApprovals {
+  required: number;
+  current: number;
+  approvers: TeamApprovalEntry[];
+}
+
+export interface UnresolvedThread {
+  id: string;
+  author: string;
+  body: string;
+  path: string | null;
+  line: number | null;
+  url: string;
+}
+
 export interface FilesChanged {
   total: number;
   additions: number;
@@ -50,6 +70,8 @@ export interface PullRequest {
   age: AgeInfo;
   active_reviewers_count: number;
   code_owner_status: CodeOwnerStatus | null;
+  team_approvals: TeamApprovals | null;
+  unresolved_comment_count: number;
   html_url: string;
   labels: string[];
 }
@@ -58,6 +80,9 @@ export interface PullRequestDetail extends Omit<PullRequest, "code_owner_status"
   body: string;
   active_reviewers: ReviewerInfo[];
   code_owner_status: CodeOwnerDetail | null;
+  team_approvals: TeamApprovals | null;
+  unresolved_comment_count: number;
+  unresolved_threads: UnresolvedThread[];
   files_changed: FilesChanged;
 }
 

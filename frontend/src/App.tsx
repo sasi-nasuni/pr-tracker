@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { BranchFilterTabs } from "@/components/dashboard/BranchFilterTabs";
 import { PRTable } from "@/components/dashboard/PRTable";
 import { PRDetailPanel } from "@/components/dashboard/PRDetailPanel";
 import { usePullRequests } from "@/hooks/usePullRequests";
-import type { PRFilters, SortField, BranchFilter } from "@/types/pull-request";
+import type { PRFilters, SortField, BranchFilter, PullRequest } from "@/types/pull-request";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,7 +24,7 @@ function Dashboard() {
   });
   const [selectedPR, setSelectedPR] = useState<number | null>(null);
 
-  const { data, isLoading, isRefetching, dataUpdatedAt, refetch } = usePullRequests(filters);
+  const { data, isLoading, isRefetching, dataUpdatedAt, refetch } = usePullRequests();
 
   const handleTabChange = useCallback((tab: BranchFilter) => {
     setFilters((prev) => ({ ...prev, branch_type: tab }));
@@ -47,11 +47,38 @@ function Dashboard() {
     setSelectedPR(null);
   }, []);
 
-  const pullRequests = data?.pull_requests ?? [];
+  const allPRs = useMemo(() => data?.pull_requests ?? [], [data]);
+
+  // Client-side filtering
+  const filteredPRs = useMemo(() => {
+    let result: PullRequest[] = allPRs;
+
+    // Filter by branch type
+    if (filters.branch_type !== "all") {
+      result = result.filter((pr) => pr.branch_type === filters.branch_type);
+    }
+
+    // Sort
+    const reverse = filters.sort_order === "desc";
+    result = [...result].sort((a, b) => {
+      let cmp = 0;
+      if (filters.sort_by === "age") {
+        cmp = (a.age.days * 24 + a.age.hours) - (b.age.days * 24 + b.age.hours);
+      } else if (filters.sort_by === "author") {
+        cmp = a.author.username.toLowerCase().localeCompare(b.author.username.toLowerCase());
+      } else if (filters.sort_by === "reviewers") {
+        cmp = a.active_reviewers_count - b.active_reviewers_count;
+      }
+      return reverse ? -cmp : cmp;
+    });
+
+    return result;
+  }, [allPRs, filters]);
+
   const counts = {
-    all: data?.total_count ?? 0,
-    main: pullRequests.filter((pr) => pr.branch_type === "main").length,
-    feature: pullRequests.filter((pr) => pr.branch_type === "feature").length,
+    all: allPRs.length,
+    main: allPRs.filter((pr) => pr.branch_type === "main").length,
+    feature: allPRs.filter((pr) => pr.branch_type === "feature").length,
   };
 
   return (
@@ -70,7 +97,7 @@ function Dashboard() {
         />
 
         <PRTable
-          pullRequests={pullRequests}
+          pullRequests={filteredPRs}
           isLoading={isLoading}
           sortBy={filters.sort_by ?? "age"}
           sortOrder={filters.sort_order ?? "desc"}

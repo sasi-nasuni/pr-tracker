@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { X, ExternalLink, FileText, Users, GitBranch, Clock, ChevronDown, ChevronRight } from "lucide-react";
+import { X, ExternalLink, FileText, Users, GitBranch, Clock, ChevronDown, ChevronRight, MessageCircle, ShieldCheck } from "lucide-react";
 import { marked } from "marked";
 import { usePRDetail } from "@/hooks/usePRDetail";
 import { AgeBadge } from "./AgeBadge";
@@ -122,6 +122,57 @@ export function PRDetailPanel({ prNumber, onClose }: PRDetailPanelProps) {
                       <div key={owner.username} className="flex items-center gap-2 text-sm">
                         <span>{owner.has_approved ? "✅" : "⏳"}</span>
                         <span className="text-gray-700">{owner.username}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Team Approvals */}
+              {pr.team_approvals && (
+                <div className="rounded-md border border-gray-200 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <ShieldCheck className="h-4 w-4" />
+                    Team Approvals ({pr.team_approvals.current}/{pr.team_approvals.required})
+                  </div>
+                  <div className="space-y-1">
+                    {pr.team_approvals.approvers.map((member) => (
+                      <div key={member.username} className="flex items-center gap-2 text-sm">
+                        <span>{member.has_approved ? "✅" : "⬜"}</span>
+                        <span className="text-gray-700">{member.username}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Unresolved Comments */}
+              {pr.unresolved_threads && pr.unresolved_threads.length > 0 && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-800">
+                    <MessageCircle className="h-4 w-4" />
+                    Unresolved Comments ({pr.unresolved_threads.length})
+                  </div>
+                  <div className="space-y-3">
+                    {pr.unresolved_threads.map((thread) => (
+                      <div key={thread.id} className="rounded border border-amber-100 bg-white p-2">
+                        <div className="flex items-center justify-between text-xs text-gray-500">
+                          <span className="font-medium text-gray-700">{thread.author}</span>
+                          {thread.path && (
+                            <span className="truncate font-mono text-gray-400">
+                              {thread.path}{thread.line ? `:${thread.line}` : ""}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs text-gray-600">{thread.body}</p>
+                        <a
+                          href={thread.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 inline-flex items-center gap-1 text-xs text-purple-600 hover:underline"
+                        >
+                          View on GitHub <ExternalLink className="h-3 w-3" />
+                        </a>
                       </div>
                     ))}
                   </div>

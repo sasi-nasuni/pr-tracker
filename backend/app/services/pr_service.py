@@ -14,6 +14,9 @@ from app.models.pr import (
     PullRequestDetail,
     PullRequestSummary,
     ReviewerInfo,
+    TeamApprovalEntry,
+    TeamApprovals,
+    UnresolvedThread,
 )
 from app.services.codeowners import get_code_owners_for_files
 from app.services.github_client import github_client
@@ -59,7 +62,7 @@ async def get_team_pull_requests(
 
     # Enrich PRs concurrently
     enriched_prs = await asyncio.gather(
-        *[_enrich_pr_summary(pr) for pr in team_prs]
+        *[_enrich_pr_summary(pr, team_usernames) for pr in team_prs]
     )
 
     # Sort
@@ -86,11 +89,13 @@ async def get_pull_request_detail(pr_number: int) -> PullRequestDetail:
         PullRequestDetail with full enrichment.
     """
     # Fetch all data concurrently
-    reviews, comments, files, codeowners_content = await asyncio.gather(
+    reviews, comments, files, codeowners_content, threads_data, team_usernames = await asyncio.gather(
         github_client.get_pr_reviews(pr_number),
         github_client.get_pr_comments(pr_number),
         github_client.get_pr_files(pr_number),
         github_client.get_codeowners(),
+        github_client.get_review_threads(pr_number),
+        get_team_usernames(),
     )
 
     # We need the PR data itself - find it from the open PRs list
@@ -118,11 +123,22 @@ async def get_pull_request_detail(pr_number: int) -> PullRequestDetail:
 
     # Get code owner status
     code_owner_status = None
+    code_owners: list[str] | None = None
     if codeowners_content and branch_type == "main":
         file_paths = [f["filename"] for f in files]
         code_owner_status = await _get_code_owner_detail(
             codeowners_content, file_paths, reviews
         )
+        if code_owner_status:
+            code_owners = [e.username for e in code_owner_status.owners]
+
+    # Compute team approvals
+    team_approvals = _compute_team_approvals(
+        reviews, team_usernames, pr_data["user"]["login"], code_owners
+    )
+
+    # Compute unresolved threads
+    unresolved_count, unresolved_threads = _extract_unresolved_threads(threads_data)
 
     # Calculate files changed stats
     files_changed = FilesChanged(
@@ -153,14 +169,17 @@ async def get_pull_request_detail(pr_number: int) -> PullRequestDetail:
         active_reviewers=active_reviewers,
         active_reviewers_count=len(active_reviewers),
         code_owner_status=code_owner_status,
+        team_approvals=team_approvals,
+        unresolved_comment_count=unresolved_count,
+        unresolved_threads=unresolved_threads,
         files_changed=files_changed,
         labels=[label["name"] for label in pr_data.get("labels", [])],
         html_url=pr_data["html_url"],
     )
 
 
-async def _enrich_pr_summary(pr_data: dict[str, Any]) -> PullRequestSummary:
-    """Enrich a raw GitHub PR with age, reviewer count, and code owner status."""
+async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) -> PullRequestSummary:
+    """Enrich a raw GitHub PR with age, reviewer count, code owner status, team approvals, and unresolved count."""
     base_branch = pr_data["base"]["ref"]
     branch_type = classify_branch(base_branch)
 
@@ -173,16 +192,18 @@ async def _enrich_pr_summary(pr_data: dict[str, Any]) -> PullRequestSummary:
         settings.aging_threshold_feature,
     )
 
-    # Fetch reviews and comments for active reviewer count
-    reviews, comments = await asyncio.gather(
+    # Fetch reviews, comments, and review threads concurrently
+    reviews, comments, threads_data = await asyncio.gather(
         github_client.get_pr_reviews(pr_data["number"]),
         github_client.get_pr_comments(pr_data["number"]),
+        github_client.get_review_threads(pr_data["number"]),
     )
 
     active_reviewers = _get_active_reviewers(reviews, comments, pr_data["user"]["login"])
 
     # Determine code owner status (summary level — just approved/pending)
     code_owner_status: Optional[CodeOwnerStatus] = None
+    code_owners: list[str] | None = None
     if branch_type == "main":
         codeowners_content = await github_client.get_codeowners()
         if codeowners_content:
@@ -194,6 +215,15 @@ async def _enrich_pr_summary(pr_data: dict[str, Any]) -> PullRequestSummary:
                     required=detail.required,
                     approved=detail.approved,
                 )
+                code_owners = [e.username for e in detail.owners]
+
+    # Compute team approvals
+    team_approvals = _compute_team_approvals(
+        reviews, team_usernames, pr_data["user"]["login"], code_owners
+    )
+
+    # Compute unresolved comment count
+    unresolved_count, _ = _extract_unresolved_threads(threads_data)
 
     return PullRequestSummary(
         number=pr_data["number"],
@@ -215,6 +245,8 @@ async def _enrich_pr_summary(pr_data: dict[str, Any]) -> PullRequestSummary:
         ),
         active_reviewers_count=len(active_reviewers),
         code_owner_status=code_owner_status,
+        team_approvals=team_approvals,
+        unresolved_comment_count=unresolved_count,
         html_url=pr_data["html_url"],
         labels=[label["name"] for label in pr_data.get("labels", [])],
     )
@@ -314,3 +346,83 @@ def _sort_prs(
         prs.sort(key=lambda p: p.active_reviewers_count, reverse=reverse)
 
     return prs
+
+
+def _compute_team_approvals(
+    reviews: list[dict],
+    team_usernames: set[str],
+    pr_author: str,
+    code_owners: list[str] | None = None,
+) -> TeamApprovals:
+    """Compute team approval status for a PR.
+
+    Team approvals exclude the PR author and code owners.
+    Only the latest review per user counts.
+    """
+    excluded = {pr_author}
+    if code_owners:
+        excluded.update(code_owners)
+
+    # Eligible team members (excluding author and code owners)
+    eligible = team_usernames - excluded
+
+    # Get latest review state per user (only from eligible team members)
+    latest_review: dict[str, str] = {}
+    for review in reviews:
+        user = review["user"]["login"]
+        if user in eligible:
+            latest_review[user] = review["state"]
+
+    # Build approval entries for all eligible members
+    entries = []
+    approved_count = 0
+    for username in sorted(eligible):
+        has_approved = latest_review.get(username) == "APPROVED"
+        if has_approved:
+            approved_count += 1
+        entries.append(TeamApprovalEntry(username=username, has_approved=has_approved))
+
+    return TeamApprovals(
+        required=settings.required_team_approvals,
+        current=approved_count,
+        approvers=entries,
+    )
+
+
+def _extract_unresolved_threads(
+    threads_data: list[dict],
+) -> tuple[int, list[UnresolvedThread]]:
+    """Extract unresolved threads from GraphQL response.
+
+    Returns:
+        Tuple of (unresolved_count, list of UnresolvedThread models).
+    """
+    unresolved: list[UnresolvedThread] = []
+
+    for thread in threads_data:
+        if thread.get("isResolved"):
+            continue
+
+        comments = thread.get("comments", {}).get("nodes", [])
+        if not comments:
+            continue
+
+        first_comment = comments[0]
+        author = first_comment.get("author", {}).get("login", "unknown")
+        body = first_comment.get("body", "")
+        path = first_comment.get("path")
+        line = first_comment.get("line")
+        url = first_comment.get("url", "")
+
+        unresolved.append(
+            UnresolvedThread(
+                id=thread.get("id", ""),
+                author=author,
+                body=body[:200] if body else "",
+                path=path,
+                line=line,
+                url=url,
+            )
+        )
+
+    return len(unresolved), unresolved
