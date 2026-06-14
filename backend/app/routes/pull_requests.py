@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
+from typing import Optional
 
 from app.models.pr import PRListResponse, PullRequestDetail
 from app.services.pr_service import get_team_pull_requests, get_pull_request_detail
@@ -21,9 +22,12 @@ async def list_pull_requests(
 
 
 @router.get("/{pr_number}", response_model=PullRequestDetail)
-async def get_pr_detail(pr_number: int) -> PullRequestDetail:
+async def get_pr_detail(
+    pr_number: int,
+    repo: Optional[str] = Query(default=None, description="Repository name (required in multi-repo mode)"),
+) -> PullRequestDetail:
     """Fetch detailed information for a specific PR."""
     try:
-        return await get_pull_request_detail(pr_number)
+        return await get_pull_request_detail(pr_number, repo=repo)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

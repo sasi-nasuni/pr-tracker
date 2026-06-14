@@ -24,7 +24,7 @@ class GitHubClient:
         )
 
     async def get_open_pull_requests(self) -> list[dict[str, Any]]:
-        """Fetch all open PRs for the repo (handles pagination)."""
+        """Fetch all open PRs for the configured single repo (handles pagination)."""
         prs: list[dict[str, Any]] = []
         page = 1
 
@@ -42,6 +42,38 @@ class GitHubClient:
                 page += 1
 
         return prs
+
+    async def search_team_pull_requests(self, team_usernames: list[str]) -> list[dict[str, Any]]:
+        """Use GitHub Search API to find all open PRs by team members across the org."""
+        author_clauses = " ".join(f"author:{u}" for u in team_usernames)
+        query = f"is:pr is:open org:{settings.github_org} {author_clauses}"
+
+        results: list[dict[str, Any]] = []
+        page = 1
+
+        async with self._client() as client:
+            while True:
+                response = await client.get(
+                    "/search/issues",
+                    params={"q": query, "per_page": 100, "page": page},
+                )
+                response.raise_for_status()
+                data = response.json()
+                results.extend(data.get("items", []))
+                if len(results) >= data.get("total_count", 0):
+                    break
+                page += 1
+
+        return results
+
+    async def get_pull_request(self, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
+        """Fetch a single PR's full data from the REST API."""
+        async with self._client() as client:
+            response = await client.get(
+                f"/repos/{owner}/{repo}/pulls/{pr_number}",
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def get_team_members(self) -> list[dict[str, Any]]:
         """Fetch members of the GitHub team."""
@@ -63,43 +95,42 @@ class GitHubClient:
 
         return members
 
-    async def get_pr_reviews(self, pr_number: int) -> list[dict[str, Any]]:
+    async def get_pr_reviews(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
         """Fetch reviews for a specific PR."""
         async with self._client() as client:
             response = await client.get(
-                f"/repos/{settings.github_org}/{settings.github_repo}/pulls/{pr_number}/reviews",
+                f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
                 params={"per_page": 100},
             )
             response.raise_for_status()
             return response.json()
 
-    async def get_pr_comments(self, pr_number: int) -> list[dict[str, Any]]:
+    async def get_pr_comments(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
         """Fetch review comments for a specific PR."""
         async with self._client() as client:
             response = await client.get(
-                f"/repos/{settings.github_org}/{settings.github_repo}/pulls/{pr_number}/comments",
+                f"/repos/{owner}/{repo}/pulls/{pr_number}/comments",
                 params={"per_page": 100},
             )
             response.raise_for_status()
             return response.json()
 
-    async def get_pr_files(self, pr_number: int) -> list[dict[str, Any]]:
+    async def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
         """Fetch changed files for a specific PR."""
         async with self._client() as client:
             response = await client.get(
-                f"/repos/{settings.github_org}/{settings.github_repo}/pulls/{pr_number}/files",
+                f"/repos/{owner}/{repo}/pulls/{pr_number}/files",
                 params={"per_page": 100},
             )
             response.raise_for_status()
             return response.json()
 
-    async def get_codeowners(self) -> str | None:
-        """Fetch the CODEOWNERS file content. Returns None if not found."""
+    async def get_codeowners(self, owner: str, repo: str) -> str | None:
+        """Fetch the CODEOWNERS file content for a repo. Returns None if not found."""
         async with self._client() as client:
-            # Try common locations
             for path in [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]:
                 response = await client.get(
-                    f"/repos/{settings.github_org}/{settings.github_repo}/contents/{path}",
+                    f"/repos/{owner}/{repo}/contents/{path}",
                     headers={**self._headers, "Accept": "application/vnd.github.raw+json"},
                 )
                 if response.status_code == 200:
@@ -113,12 +144,8 @@ class GitHubClient:
             response.raise_for_status()
             return response.json()
 
-    async def get_review_threads(self, pr_number: int) -> list[dict[str, Any]]:
-        """Fetch review threads for a PR using the GraphQL API.
-
-        Returns a list of thread dicts with:
-          - id, isResolved, comments (first comment body, author, path, line, url)
-        """
+    async def get_review_threads(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
+        """Fetch review threads for a PR using the GraphQL API."""
         query = """
         query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
           repository(owner: $owner, name: $repo) {
@@ -149,8 +176,8 @@ class GitHubClient:
         async with self._client() as client:
             while True:
                 variables = {
-                    "owner": settings.github_org,
-                    "repo": settings.github_repo,
+                    "owner": owner,
+                    "repo": repo,
                     "prNumber": pr_number,
                     "cursor": cursor,
                 }

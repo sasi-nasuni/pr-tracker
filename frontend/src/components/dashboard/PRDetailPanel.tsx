@@ -6,11 +6,12 @@ import { AgeBadge } from "./AgeBadge";
 
 interface PRDetailPanelProps {
   prNumber: number | null;
+  repo?: string;
   onClose: () => void;
 }
 
-export function PRDetailPanel({ prNumber, onClose }: PRDetailPanelProps) {
-  const { data: pr, isLoading, error } = usePRDetail(prNumber);
+export function PRDetailPanel({ prNumber, repo, onClose }: PRDetailPanelProps) {
+  const { data: pr, isLoading, error } = usePRDetail(prNumber, repo);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Lock body scroll when open

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str
     github_org: str
-    github_repo: str
+    github_repo: Optional[str] = None  # Optional: if set, single-repo mode; if unset, multi-repo
     github_team_slug: str
 
     # Aging Thresholds (days)

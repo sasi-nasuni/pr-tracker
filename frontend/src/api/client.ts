@@ -13,8 +13,9 @@ export async function fetchPullRequests(): Promise<PRListResponse> {
   return apiClient<PRListResponse>("/api/v1/pull-requests");
 }
 
-export async function fetchPRDetail(prNumber: number): Promise<PullRequestDetail> {
-  return apiClient<PullRequestDetail>(`/api/v1/pull-requests/${prNumber}`);
+export async function fetchPRDetail(prNumber: number, repo?: string): Promise<PullRequestDetail> {
+  const params = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+  return apiClient<PullRequestDetail>(`/api/v1/pull-requests/${prNumber}${params}`);
 }
 
 export async function fetchHealthCheck(): Promise<{ status: string }> {

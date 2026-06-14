@@ -12,7 +12,7 @@ interface PRTableProps {
   sortBy: SortField;
   sortOrder: SortOrder;
   onSort: (field: SortField) => void;
-  onRowClick: (prNumber: number) => void;
+  onRowClick: (prNumber: number, repo: string) => void;
   selectedPR: number | null;
 }
 
@@ -44,6 +44,7 @@ export function PRTable({
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
             <th className="px-4 py-3 text-left font-medium text-gray-600">#</th>
+            <th className="px-4 py-3 text-left font-medium text-gray-600">Repo</th>
             <th className="px-4 py-3 text-left font-medium text-gray-600">Title</th>
             <SortableHeader
               label="Author"
@@ -75,14 +76,17 @@ export function PRTable({
         <tbody>
           {pullRequests.map((pr) => (
             <tr
-              key={pr.number}
-              onClick={() => onRowClick(pr.number)}
+              key={`${pr.repository}-${pr.number}`}
+              onClick={() => onRowClick(pr.number, pr.repository)}
               className={`cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50 ${
                 selectedPR === pr.number ? "bg-purple-50" : ""
               }`}
             >
               <td className="px-4 py-3 font-mono text-xs text-gray-500">
                 #{pr.number}
+              </td>
+              <td className="px-4 py-3 font-mono text-xs text-gray-500">
+                {pr.repository}
               </td>
               <td className="max-w-xs px-4 py-3 font-medium text-gray-900">
                 <div className="flex items-center gap-2 truncate">

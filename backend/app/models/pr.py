@@ -67,6 +67,7 @@ class PullRequestSummary(BaseModel):
     """Summary model for the PR list endpoint."""
 
     number: int
+    repository: str
     title: str
     author: Author
     base_branch: str
@@ -86,6 +87,7 @@ class PullRequestDetail(BaseModel):
     """Detailed model for the single PR endpoint."""
 
     number: int
+    repository: str
     title: str
     body: str
     author: Author

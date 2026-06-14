@@ -61,6 +61,7 @@ export interface FilesChanged {
 
 export interface PullRequest {
   number: number;
+  repository: string;
   title: string;
   author: Author;
   base_branch: string;
@@ -102,6 +103,7 @@ export type SortOrder = "asc" | "desc";
 
 export interface PRFilters {
   branch_type: BranchFilter;
+  repository: string;
   sort_by: SortField;
   sort_order: SortOrder;
 }

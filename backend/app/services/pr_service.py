@@ -26,6 +26,15 @@ from app.utils.time_helpers import calculate_age, check_staleness, classify_bran
 logger = logging.getLogger(__name__)
 
 
+def _extract_repo_info(pr_data: dict[str, Any]) -> tuple[str, str]:
+    """Extract owner and repo name from a PR data dict."""
+    repo_url = pr_data.get("base", {}).get("repo", {}).get("full_name", "")
+    if "/" in repo_url:
+        owner, repo = repo_url.split("/", 1)
+        return owner, repo
+    return settings.github_org, settings.github_repo or ""
+
+
 async def get_team_pull_requests(
     branch_type: str = "all",
     sort_by: str = "age",
@@ -33,25 +42,23 @@ async def get_team_pull_requests(
 ) -> PRListResponse:
     """Fetch, filter, enrich, and sort team PRs.
 
-    Args:
-        branch_type: Filter by 'all', 'main', or 'feature'.
-        sort_by: Sort field ('age', 'author', 'reviewers').
-        sort_order: Sort direction ('asc' or 'desc').
-
-    Returns:
-        PRListResponse with filtered/sorted pull requests.
+    Supports both single-repo mode (GITHUB_REPO set) and
+    multi-repo mode (GITHUB_REPO unset — discovers via Search API).
     """
-    # Fetch team members and PRs concurrently
-    team_usernames, all_prs = await asyncio.gather(
-        get_team_usernames(),
-        github_client.get_open_pull_requests(),
-    )
+    team_usernames = await get_team_usernames()
+
+    if settings.github_repo:
+        # Single-repo mode (legacy)
+        all_prs = await github_client.get_open_pull_requests()
+        team_prs = [pr for pr in all_prs if pr["user"]["login"] in team_usernames]
+    else:
+        # Multi-repo mode — use Search API
+        search_results = await github_client.search_team_pull_requests(list(team_usernames))
+        # Fetch full PR data for each search result (search doesn't include branch info)
+        team_prs = await _fetch_full_pr_data(search_results)
 
     # Filter out draft PRs
-    all_prs = [pr for pr in all_prs if not pr.get("draft", False)]
-
-    # Filter by team members
-    team_prs = [pr for pr in all_prs if pr["user"]["login"] in team_usernames]
+    team_prs = [pr for pr in team_prs if not pr.get("draft", False)]
 
     # Filter by branch type
     if branch_type != "all":
@@ -79,31 +86,52 @@ async def get_team_pull_requests(
     )
 
 
-async def get_pull_request_detail(pr_number: int) -> PullRequestDetail:
+async def _fetch_full_pr_data(search_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fetch full PR data from REST API for each search result."""
+    async def fetch_one(item: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            repo_url = item.get("repository_url", "")
+            # repository_url: "https://api.github.com/repos/nasuni/portal"
+            parts = repo_url.rstrip("/").split("/repos/")
+            if len(parts) < 2:
+                return None
+            owner_repo = parts[-1]  # "nasuni/portal"
+            owner, repo = owner_repo.split("/", 1)
+            pr_number = item["number"]
+            return await github_client.get_pull_request(owner, repo, pr_number)
+        except Exception as e:
+            logger.warning(f"Failed to fetch PR data: {e}")
+            return None
+
+    results = await asyncio.gather(*[fetch_one(item) for item in search_results])
+    return [r for r in results if r is not None]
+
+
+async def get_pull_request_detail(pr_number: int, repo: str | None = None) -> PullRequestDetail:
     """Fetch detailed information for a single PR.
 
     Args:
         pr_number: The PR number to fetch details for.
-
-    Returns:
-        PullRequestDetail with full enrichment.
+        repo: The repository name (e.g., "portal"). Required in multi-repo mode.
     """
+    # Determine owner/repo
+    owner = settings.github_org
+    repo_name = repo or settings.github_repo
+    if not repo_name:
+        raise ValueError("Repository name is required in multi-repo mode")
+
     # Fetch all data concurrently
     reviews, comments, files, codeowners_content, threads_data, team_usernames = await asyncio.gather(
-        github_client.get_pr_reviews(pr_number),
-        github_client.get_pr_comments(pr_number),
-        github_client.get_pr_files(pr_number),
-        github_client.get_codeowners(),
-        github_client.get_review_threads(pr_number),
+        github_client.get_pr_reviews(owner, repo_name, pr_number),
+        github_client.get_pr_comments(owner, repo_name, pr_number),
+        github_client.get_pr_files(owner, repo_name, pr_number),
+        github_client.get_codeowners(owner, repo_name),
+        github_client.get_review_threads(owner, repo_name, pr_number),
         get_team_usernames(),
     )
 
-    # We need the PR data itself - find it from the open PRs list
-    all_prs = await github_client.get_open_pull_requests()
-    pr_data = next((pr for pr in all_prs if pr["number"] == pr_number), None)
-
-    if pr_data is None:
-        raise ValueError(f"PR #{pr_number} not found or not open")
+    # Fetch the PR data itself
+    pr_data = await github_client.get_pull_request(owner, repo_name, pr_number)
 
     # Classify branch
     base_branch = pr_data["base"]["ref"]
@@ -149,6 +177,7 @@ async def get_pull_request_detail(pr_number: int) -> PullRequestDetail:
 
     return PullRequestDetail(
         number=pr_data["number"],
+        repository=repo_name,
         title=pr_data["title"],
         body=pr_data.get("body") or "",
         author=Author(
@@ -180,6 +209,7 @@ async def get_pull_request_detail(pr_number: int) -> PullRequestDetail:
 
 async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) -> PullRequestSummary:
     """Enrich a raw GitHub PR with age, reviewer count, code owner status, team approvals, and unresolved count."""
+    owner, repo = _extract_repo_info(pr_data)
     base_branch = pr_data["base"]["ref"]
     branch_type = classify_branch(base_branch)
 
@@ -194,9 +224,9 @@ async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) 
 
     # Fetch reviews, comments, and review threads concurrently
     reviews, comments, threads_data = await asyncio.gather(
-        github_client.get_pr_reviews(pr_data["number"]),
-        github_client.get_pr_comments(pr_data["number"]),
-        github_client.get_review_threads(pr_data["number"]),
+        github_client.get_pr_reviews(owner, repo, pr_data["number"]),
+        github_client.get_pr_comments(owner, repo, pr_data["number"]),
+        github_client.get_review_threads(owner, repo, pr_data["number"]),
     )
 
     active_reviewers = _get_active_reviewers(reviews, comments, pr_data["user"]["login"])
@@ -205,9 +235,9 @@ async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) 
     code_owner_status: Optional[CodeOwnerStatus] = None
     code_owners: list[str] | None = None
     if branch_type == "main":
-        codeowners_content = await github_client.get_codeowners()
+        codeowners_content = await github_client.get_codeowners(owner, repo)
         if codeowners_content:
-            files = await github_client.get_pr_files(pr_data["number"])
+            files = await github_client.get_pr_files(owner, repo, pr_data["number"])
             file_paths = [f["filename"] for f in files]
             detail = await _get_code_owner_detail(codeowners_content, file_paths, reviews)
             if detail:
@@ -227,6 +257,7 @@ async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) 
 
     return PullRequestSummary(
         number=pr_data["number"],
+        repository=repo,
         title=pr_data["title"],
         author=Author(
             username=pr_data["user"]["login"],
@@ -255,14 +286,9 @@ async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) 
 def _get_active_reviewers(
     reviews: list[dict], comments: list[dict], pr_author: str
 ) -> list[ReviewerInfo]:
-    """Extract unique active reviewers from reviews and comments.
-
-    Active = has reviewed (APPROVED/CHANGES_REQUESTED) or commented (excluding author).
-    For users with multiple reviews, use their latest review state.
-    """
+    """Extract unique active reviewers from reviews and comments."""
     reviewer_map: dict[str, ReviewerInfo] = {}
 
-    # Process reviews — latest review per user wins
     for review in reviews:
         user = review["user"]["login"]
         state = review["state"]
@@ -275,7 +301,6 @@ def _get_active_reviewers(
                 state=state,
             )
 
-    # Process review comments — add users not already tracked
     for comment in comments:
         user = comment["user"]["login"]
         if user == pr_author:
@@ -295,28 +320,17 @@ async def _get_code_owner_detail(
     file_paths: list[str],
     reviews: list[dict],
 ) -> Optional[CodeOwnerDetail]:
-    """Determine code owner approval status for a PR.
-
-    Args:
-        codeowners_content: Raw CODEOWNERS file content.
-        file_paths: List of files changed in the PR.
-        reviews: List of review data from GitHub.
-
-    Returns:
-        CodeOwnerDetail or None if no owners match.
-    """
+    """Determine code owner approval status for a PR."""
     owners = get_code_owners_for_files(codeowners_content, file_paths)
     if not owners:
         return None
 
-    # Get set of users who approved
     approved_users = {
         review["user"]["login"]
         for review in reviews
         if review["state"] == "APPROVED"
     }
 
-    # Build owner entries
     owner_entries = []
     all_approved = True
     for owner in owners:
@@ -354,26 +368,19 @@ def _compute_team_approvals(
     pr_author: str,
     code_owners: list[str] | None = None,
 ) -> TeamApprovals:
-    """Compute team approval status for a PR.
-
-    Team approvals exclude the PR author and code owners.
-    Only the latest review per user counts.
-    """
+    """Compute team approval status for a PR."""
     excluded = {pr_author}
     if code_owners:
         excluded.update(code_owners)
 
-    # Eligible team members (excluding author and code owners)
     eligible = team_usernames - excluded
 
-    # Get latest review state per user (only from eligible team members)
     latest_review: dict[str, str] = {}
     for review in reviews:
         user = review["user"]["login"]
         if user in eligible:
             latest_review[user] = review["state"]
 
-    # Build approval entries for all eligible members
     entries = []
     approved_count = 0
     for username in sorted(eligible):
@@ -392,11 +399,7 @@ def _compute_team_approvals(
 def _extract_unresolved_threads(
     threads_data: list[dict],
 ) -> tuple[int, list[UnresolvedThread]]:
-    """Extract unresolved threads from GraphQL response.
-
-    Returns:
-        Tuple of (unresolved_count, list of UnresolvedThread models).
-    """
+    """Extract unresolved threads from GraphQL response."""
     unresolved: list[UnresolvedThread] = []
 
     for thread in threads_data:

@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { BranchFilterTabs } from "@/components/dashboard/BranchFilterTabs";
+import { RepoFilter } from "@/components/dashboard/RepoFilter";
 import { PRTable } from "@/components/dashboard/PRTable";
 import { PRDetailPanel } from "@/components/dashboard/PRDetailPanel";
 import { usePullRequests } from "@/hooks/usePullRequests";
@@ -19,15 +20,20 @@ const queryClient = new QueryClient({
 function Dashboard() {
   const [filters, setFilters] = useState<PRFilters>({
     branch_type: "all",
+    repository: "all",
     sort_by: "age",
     sort_order: "desc",
   });
-  const [selectedPR, setSelectedPR] = useState<number | null>(null);
+  const [selectedPR, setSelectedPR] = useState<{ number: number; repo: string } | null>(null);
 
   const { data, isLoading, isRefetching, dataUpdatedAt, refetch } = usePullRequests();
 
   const handleTabChange = useCallback((tab: BranchFilter) => {
     setFilters((prev) => ({ ...prev, branch_type: tab }));
+  }, []);
+
+  const handleRepoChange = useCallback((repo: string) => {
+    setFilters((prev) => ({ ...prev, repository: repo }));
   }, []);
 
   const handleSort = useCallback((field: SortField) => {
@@ -39,8 +45,8 @@ function Dashboard() {
     });
   }, []);
 
-  const handleRowClick = useCallback((prNumber: number) => {
-    setSelectedPR(prNumber);
+  const handleRowClick = useCallback((prNumber: number, repo: string) => {
+    setSelectedPR({ number: prNumber, repo });
   }, []);
 
   const handleClosePanel = useCallback(() => {
@@ -49,9 +55,24 @@ function Dashboard() {
 
   const allPRs = useMemo(() => data?.pull_requests ?? [], [data]);
 
+  // Compute repo list from full dataset
+  const repos = useMemo(() => {
+    const repoMap = new Map<string, number>();
+    for (const pr of allPRs) {
+      repoMap.set(pr.repository, (repoMap.get(pr.repository) || 0) + 1);
+    }
+    return Array.from(repoMap, ([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [allPRs]);
+
   // Client-side filtering
   const filteredPRs = useMemo(() => {
     let result: PullRequest[] = allPRs;
+
+    // Filter by repository
+    if (filters.repository !== "all") {
+      result = result.filter((pr) => pr.repository === filters.repository);
+    }
 
     // Filter by branch type
     if (filters.branch_type !== "all") {
@@ -75,11 +96,17 @@ function Dashboard() {
     return result;
   }, [allPRs, filters]);
 
-  const counts = {
-    all: allPRs.length,
-    main: allPRs.filter((pr) => pr.branch_type === "main").length,
-    feature: allPRs.filter((pr) => pr.branch_type === "feature").length,
-  };
+  // Counts reflect repo filter
+  const counts = useMemo(() => {
+    const repoFiltered = filters.repository === "all"
+      ? allPRs
+      : allPRs.filter((pr) => pr.repository === filters.repository);
+    return {
+      all: repoFiltered.length,
+      main: repoFiltered.filter((pr) => pr.branch_type === "main").length,
+      feature: repoFiltered.filter((pr) => pr.branch_type === "feature").length,
+    };
+  }, [allPRs, filters.repository]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -90,11 +117,18 @@ function Dashboard() {
           onRefresh={() => refetch()}
         />
 
-        <BranchFilterTabs
-          activeTab={filters.branch_type ?? "all"}
-          counts={counts}
-          onTabChange={handleTabChange}
-        />
+        <div className="mb-4 flex items-center gap-4">
+          <RepoFilter
+            repos={repos}
+            selected={filters.repository}
+            onChange={handleRepoChange}
+          />
+          <BranchFilterTabs
+            activeTab={filters.branch_type ?? "all"}
+            counts={counts}
+            onTabChange={handleTabChange}
+          />
+        </div>
 
         <PRTable
           pullRequests={filteredPRs}
@@ -103,11 +137,15 @@ function Dashboard() {
           sortOrder={filters.sort_order ?? "desc"}
           onSort={handleSort}
           onRowClick={handleRowClick}
-          selectedPR={selectedPR}
+          selectedPR={selectedPR?.number ?? null}
         />
       </div>
 
-      <PRDetailPanel prNumber={selectedPR} onClose={handleClosePanel} />
+      <PRDetailPanel
+        prNumber={selectedPR?.number ?? null}
+        repo={selectedPR?.repo}
+        onClose={handleClosePanel}
+      />
     </div>
   );
 }
