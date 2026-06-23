@@ -206,6 +206,33 @@ class GitHubClient:
 
         return threads
 
+    async def get_team_members_for_slug(self, team_slug: str) -> list[dict[str, Any]]:
+        """Fetch members of a specific GitHub team by slug."""
+        members: list[dict[str, Any]] = []
+        page = 1
+
+        async with self._client() as client:
+            while True:
+                response = await client.get(
+                    f"/orgs/{settings.github_org}/teams/{team_slug}/members",
+                    params={"per_page": 100, "page": page},
+                )
+                response.raise_for_status()
+                data = response.json()
+                if not data:
+                    break
+                members.extend(data)
+                page += 1
+
+        return members
+
+    async def get_user_profile(self, username: str) -> dict[str, Any]:
+        """Fetch a GitHub user's profile (for display name)."""
+        async with self._client() as client:
+            response = await client.get(f"/users/{username}")
+            response.raise_for_status()
+            return response.json()
+
 
 # Singleton instance
 github_client = GitHubClient()

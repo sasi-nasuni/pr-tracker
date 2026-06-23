@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 def calculate_age(created_at: str) -> dict:
@@ -12,9 +12,7 @@ def calculate_age(created_at: str) -> dict:
     """
     created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
     now = datetime.now(timezone.utc)
-    delta = now - created
-
-    total_seconds = int(delta.total_seconds())
+    total_seconds = _business_seconds_between(created, now)
     days = total_seconds // 86400
     hours = (total_seconds % 86400) // 3600
 
@@ -29,6 +27,33 @@ def calculate_age(created_at: str) -> dict:
         "display": display,
         "total_hours": days * 24 + hours,
     }
+
+
+def _business_seconds_between(start: datetime, end: datetime) -> int:
+    """Return elapsed seconds between two datetimes, excluding weekends.
+
+    All weekday hours count; Saturday and Sunday hours are excluded.
+    """
+    if end <= start:
+        return 0
+
+    total_seconds = 0
+    cursor = start
+
+    while cursor.date() < end.date():
+        next_midnight = datetime.combine(
+            cursor.date() + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=cursor.tzinfo,
+        )
+        if cursor.weekday() < 5:
+                        total_seconds += int((next_midnight - cursor).total_seconds())
+        cursor = next_midnight
+
+    if cursor.weekday() < 5:
+        total_seconds += int((end - cursor).total_seconds())
+
+    return total_seconds
 
 
 def check_staleness(age_days: int, branch_type: str, threshold_main: int, threshold_feature: int) -> tuple[bool, int]:

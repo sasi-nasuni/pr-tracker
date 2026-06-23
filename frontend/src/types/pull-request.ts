@@ -1,6 +1,7 @@
 export interface Author {
   username: string;
   avatar_url: string;
+  display_name?: string | null;
 }
 
 export interface AgeInfo {
@@ -104,6 +105,19 @@ export type SortOrder = "asc" | "desc";
 export interface PRFilters {
   branch_type: BranchFilter;
   repository: string;
+  team: string;
+  person: string;
   sort_by: SortField;
   sort_order: SortOrder;
+}
+
+export interface TeamMember {
+  username: string;
+  avatar_url: string;
+  display_name: string;
+}
+
+export interface TeamsResponse {
+  teams: Record<string, TeamMember[]>;
+  slugs: string[];
 }

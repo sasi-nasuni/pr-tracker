@@ -1,30 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
-interface RepoFilterProps {
-  repos: { name: string; count: number }[];
+interface PersonFilterProps {
+  people: { username: string; display_name: string; count: number }[];
   selected: string;
-  onChange: (repo: string) => void;
+  onChange: (person: string) => void;
 }
 
-export function RepoFilter({ repos, selected, onChange }: RepoFilterProps) {
+export function PersonFilter({ people, selected, onChange }: PersonFilterProps) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const totalCount = useMemo(
-    () => repos.reduce((sum, repo) => sum + repo.count, 0),
-    [repos]
+    () => people.reduce((sum, person) => sum + person.count, 0),
+    [people]
   );
 
   const options = useMemo(
     () => [
-      { value: "all", label: `All Repos (${totalCount})` },
-      ...repos.map((repo) => ({
-        value: repo.name,
-        label: `${repo.name} (${repo.count})`,
+      { value: "all", label: `All People (${totalCount})` },
+      ...people.map((person) => ({
+        value: person.username,
+        label: `${person.display_name} (${person.count})`,
       })),
     ],
-    [repos, totalCount]
+    [people, totalCount]
   );
 
   const selectedOption =

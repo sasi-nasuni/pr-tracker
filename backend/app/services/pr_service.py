@@ -20,7 +20,7 @@ from app.models.pr import (
 )
 from app.services.codeowners import get_code_owners_for_files
 from app.services.github_client import github_client
-from app.services.team_service import get_team_usernames
+from app.services.team_service import get_all_team_members, get_team_usernames, resolve_display_names
 from app.utils.time_helpers import calculate_age, check_staleness, classify_branch
 
 logger = logging.getLogger(__name__)
@@ -39,13 +39,16 @@ async def get_team_pull_requests(
     branch_type: str = "all",
     sort_by: str = "age",
     sort_order: str = "desc",
+    team_slug: Optional[str] = None,
 ) -> PRListResponse:
     """Fetch, filter, enrich, and sort team PRs.
 
     Supports both single-repo mode (GITHUB_REPO set) and
     multi-repo mode (GITHUB_REPO unset — discovers via Search API).
     """
-    team_usernames = await get_team_usernames()
+    team_usernames = await get_team_usernames(team_slug)
+    team_map = await get_all_team_members()
+    team_usernames_by_slug = _build_team_usernames_by_slug(team_map)
 
     if settings.github_repo:
         # Single-repo mode (legacy)
@@ -67,9 +70,21 @@ async def get_team_pull_requests(
             if classify_branch(pr["base"]["ref"]) == branch_type
         ]
 
+    # Resolve display names for all PR authors
+    author_usernames = list({pr["user"]["login"] for pr in team_prs})
+    display_names = await resolve_display_names(author_usernames)
+
     # Enrich PRs concurrently
     enriched_prs = await asyncio.gather(
-        *[_enrich_pr_summary(pr, team_usernames) for pr in team_prs]
+        *[
+            _enrich_pr_summary(
+                pr,
+                team_usernames_by_slug,
+                display_names,
+                selected_team_slug=team_slug,
+            )
+            for pr in team_prs
+        ]
     )
 
     # Sort
@@ -121,13 +136,13 @@ async def get_pull_request_detail(pr_number: int, repo: str | None = None) -> Pu
         raise ValueError("Repository name is required in multi-repo mode")
 
     # Fetch all data concurrently
-    reviews, comments, files, codeowners_content, threads_data, team_usernames = await asyncio.gather(
+    reviews, comments, files, codeowners_content, threads_data, team_map = await asyncio.gather(
         github_client.get_pr_reviews(owner, repo_name, pr_number),
         github_client.get_pr_comments(owner, repo_name, pr_number),
         github_client.get_pr_files(owner, repo_name, pr_number),
         github_client.get_codeowners(owner, repo_name),
         github_client.get_review_threads(owner, repo_name, pr_number),
-        get_team_usernames(),
+        get_all_team_members(),
     )
 
     # Fetch the PR data itself
@@ -161,8 +176,13 @@ async def get_pull_request_detail(pr_number: int, repo: str | None = None) -> Pu
             code_owners = [e.username for e in code_owner_status.owners]
 
     # Compute team approvals
+    team_usernames_by_slug = _build_team_usernames_by_slug(team_map)
+    scoped_team_usernames = _get_scoped_team_usernames(
+        pr_data["user"]["login"],
+        team_usernames_by_slug,
+    )
     team_approvals = _compute_team_approvals(
-        reviews, team_usernames, pr_data["user"]["login"], code_owners
+        reviews, scoped_team_usernames, pr_data["user"]["login"], code_owners
     )
 
     # Compute unresolved threads
@@ -207,7 +227,12 @@ async def get_pull_request_detail(pr_number: int, repo: str | None = None) -> Pu
     )
 
 
-async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) -> PullRequestSummary:
+async def _enrich_pr_summary(
+    pr_data: dict[str, Any],
+    team_usernames_by_slug: dict[str, set[str]],
+    display_names: dict[str, str],
+    selected_team_slug: Optional[str] = None,
+) -> PullRequestSummary:
     """Enrich a raw GitHub PR with age, reviewer count, code owner status, team approvals, and unresolved count."""
     owner, repo = _extract_repo_info(pr_data)
     base_branch = pr_data["base"]["ref"]
@@ -248,20 +273,28 @@ async def _enrich_pr_summary(pr_data: dict[str, Any], team_usernames: set[str]) 
                 code_owners = [e.username for e in detail.owners]
 
     # Compute team approvals
+    scoped_team_usernames = _get_scoped_team_usernames(
+        pr_data["user"]["login"],
+        team_usernames_by_slug,
+        selected_team_slug=selected_team_slug,
+    )
     team_approvals = _compute_team_approvals(
-        reviews, team_usernames, pr_data["user"]["login"], code_owners
+        reviews, scoped_team_usernames, pr_data["user"]["login"], code_owners
     )
 
     # Compute unresolved comment count
     unresolved_count, _ = _extract_unresolved_threads(threads_data)
+
+    author_username = pr_data["user"]["login"]
 
     return PullRequestSummary(
         number=pr_data["number"],
         repository=repo,
         title=pr_data["title"],
         author=Author(
-            username=pr_data["user"]["login"],
+            username=author_username,
             avatar_url=pr_data["user"]["avatar_url"],
+            display_name=display_names.get(author_username),
         ),
         base_branch=base_branch,
         head_branch=pr_data["head"]["ref"],
@@ -394,6 +427,45 @@ def _compute_team_approvals(
         current=approved_count,
         approvers=entries,
     )
+
+
+def _build_team_usernames_by_slug(team_map: dict[str, list[Any]]) -> dict[str, set[str]]:
+    """Build slug -> usernames map excluding explicitly excluded members."""
+    excluded = set(settings.excluded_members_list)
+    team_usernames_by_slug: dict[str, set[str]] = {}
+
+    for slug, members in team_map.items():
+        team_usernames_by_slug[slug] = {
+            m.username for m in members if m.username not in excluded
+        }
+
+    return team_usernames_by_slug
+
+
+def _get_scoped_team_usernames(
+    pr_author: str,
+    team_usernames_by_slug: dict[str, set[str]],
+    selected_team_slug: Optional[str] = None,
+) -> set[str]:
+    """Return the team member usernames relevant for this PR's author.
+
+    If a specific team is selected in the API call, use that team's users.
+    Otherwise, detect the author's team by configured slug order and use only
+    that team's members for approvals.
+    """
+    if selected_team_slug and selected_team_slug in team_usernames_by_slug:
+        return set(team_usernames_by_slug[selected_team_slug])
+
+    for slug in settings.team_slugs_list:
+        usernames = team_usernames_by_slug.get(slug, set())
+        if pr_author in usernames:
+            return set(usernames)
+
+    # Fallback: if author is not found in any team map, keep previous behavior.
+    all_usernames: set[str] = set()
+    for usernames in team_usernames_by_slug.values():
+        all_usernames.update(usernames)
+    return all_usernames
 
 
 def _extract_unresolved_threads(

@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     github_token: str
     github_org: str
     github_repo: Optional[str] = None  # Optional: if set, single-repo mode; if unset, multi-repo
-    github_team_slug: str
+    github_team_slug: Optional[str] = None  # Primary team slug (legacy fallback)
+    github_team_slugs: Optional[str] = None  # Comma-separated team slugs for multi-team mode
 
     # Aging Thresholds (days)
     aging_threshold_main: int = 3
@@ -44,6 +45,24 @@ class Settings(BaseSettings):
         if not self.excluded_team_members:
             return []
         return [m.strip() for m in self.excluded_team_members.split(",")]
+
+    @property
+    def team_slugs_list(self) -> list[str]:
+        """Return list of all team slugs to track.
+
+        Priority:
+        1. GITHUB_TEAM_SLUGS (comma-separated)
+        2. GITHUB_TEAM_SLUG (legacy fallback)
+        """
+        if self.github_team_slugs:
+            slugs = [s.strip() for s in self.github_team_slugs.split(",") if s.strip()]
+            if slugs:
+                return slugs
+
+        if self.github_team_slug:
+            return [self.github_team_slug.strip()]
+
+        raise ValueError("Set GITHUB_TEAM_SLUGS or GITHUB_TEAM_SLUG in environment")
 
     class Config:
         env_file = ".env"

@@ -5,6 +5,7 @@ from typing import Optional
 class Author(BaseModel):
     username: str
     avatar_url: str
+    display_name: Optional[str] = None
 
 
 class AgeInfo(BaseModel):

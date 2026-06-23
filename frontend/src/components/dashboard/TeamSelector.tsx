@@ -1,31 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
-interface RepoFilterProps {
-  repos: { name: string; count: number }[];
+interface TeamSelectorProps {
+  slugs: string[];
   selected: string;
-  onChange: (repo: string) => void;
+  onChange: (team: string) => void;
 }
 
-export function RepoFilter({ repos, selected, onChange }: RepoFilterProps) {
+export function TeamSelector({ slugs, selected, onChange }: TeamSelectorProps) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const totalCount = useMemo(
-    () => repos.reduce((sum, repo) => sum + repo.count, 0),
-    [repos]
-  );
-
-  const options = useMemo(
-    () => [
-      { value: "all", label: `All Repos (${totalCount})` },
-      ...repos.map((repo) => ({
-        value: repo.name,
-        label: `${repo.name} (${repo.count})`,
-      })),
-    ],
-    [repos, totalCount]
-  );
+  const options = useMemo(() => {
+    const base = slugs.map((slug) => ({
+      value: slug,
+      label: slug,
+    }));
+    if (slugs.length > 1) {
+      return [{ value: "all", label: "All Teams" }, ...base];
+    }
+    return base;
+  }, [slugs]);
 
   const selectedOption =
     options.find((option) => option.value === selected) ?? options[0];
@@ -49,9 +44,11 @@ export function RepoFilter({ repos, selected, onChange }: RepoFilterProps) {
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         className="flex h-10 w-full items-center justify-between rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-400 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200"
-        title={selectedOption.label}
+        title={selectedOption?.label ?? "Team"}
       >
-        <span className="truncate">{selectedOption.label}</span>
+        <span className="truncate">
+          {selectedOption ? `Team: ${selectedOption.label}` : "Team"}
+        </span>
         <ChevronDown
           className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
         />
@@ -74,9 +71,8 @@ export function RepoFilter({ repos, selected, onChange }: RepoFilterProps) {
                     ? "bg-slate-100 font-medium text-slate-900"
                     : "text-slate-700 hover:bg-slate-50"
                 }`}
-                title={option.label}
               >
-                <span className="truncate">{option.label}</span>
+                <span className="truncate capitalize">{option.label}</span>
                 {isSelected && <Check className="ml-2 h-4 w-4 shrink-0 text-slate-500" />}
               </button>
             );

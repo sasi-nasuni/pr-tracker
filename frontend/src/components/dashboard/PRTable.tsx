@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import { ArrowUpDown, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
 import type { PullRequest, SortField, SortOrder } from "@/types/pull-request";
 import { AgeBadge } from "./AgeBadge";
@@ -16,6 +17,46 @@ interface PRTableProps {
   selectedPR: number | null;
 }
 
+type ColumnKey =
+  | "number"
+  | "repo"
+  | "title"
+  | "author"
+  | "branch"
+  | "age"
+  | "reviewers"
+  | "codeOwner"
+  | "teamApprovals"
+  | "link";
+
+const COLUMN_MIN_WIDTHS: Record<ColumnKey, number> = {
+  number: 84,
+  repo: 180,
+  title: 380,
+  author: 220,
+  branch: 120,
+  age: 120,
+  reviewers: 120,
+  codeOwner: 160,
+  teamApprovals: 170,
+  link: 80,
+};
+
+const COLUMN_DEFAULT_WIDTHS: Record<ColumnKey, number> = {
+  number: 84,
+  repo: 180,
+  title: 480,
+  author: 240,
+  branch: 130,
+  age: 120,
+  reviewers: 120,
+  codeOwner: 180,
+  teamApprovals: 190,
+  link: 80,
+};
+
+const RESIZABLE_COLUMNS: ColumnKey[] = ["repo", "title", "author", "codeOwner", "teamApprovals"];
+
 export function PRTable({
   pullRequests,
   isLoading,
@@ -25,6 +66,55 @@ export function PRTable({
   onRowClick,
   selectedPR,
 }: PRTableProps) {
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(COLUMN_DEFAULT_WIDTHS);
+  const [resizing, setResizing] = useState<{
+    column: ColumnKey;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  const startResize = useCallback(
+    (column: ColumnKey, event: React.MouseEvent<HTMLSpanElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setResizing({
+        column,
+        startX: event.clientX,
+        startWidth: columnWidths[column],
+      });
+    },
+    [columnWidths]
+  );
+
+  useEffect(() => {
+    if (!resizing) {
+      return;
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const deltaX = event.clientX - resizing.startX;
+      setColumnWidths((prev) => ({
+        ...prev,
+        [resizing.column]: Math.max(
+          COLUMN_MIN_WIDTHS[resizing.column],
+          resizing.startWidth + deltaX
+        ),
+      }));
+    };
+
+    const handleMouseUp = () => {
+      setResizing(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [resizing]);
+
   if (isLoading) {
     return <TableSkeleton />;
   }
@@ -40,37 +130,116 @@ export function PRTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="min-w-[1660px] text-sm">
+        <colgroup>
+          <col style={{ width: columnWidths.number, minWidth: COLUMN_MIN_WIDTHS.number }} />
+          <col style={{ width: columnWidths.repo, minWidth: COLUMN_MIN_WIDTHS.repo }} />
+          <col style={{ width: columnWidths.title, minWidth: COLUMN_MIN_WIDTHS.title }} />
+          <col style={{ width: columnWidths.author, minWidth: COLUMN_MIN_WIDTHS.author }} />
+          <col style={{ width: columnWidths.branch, minWidth: COLUMN_MIN_WIDTHS.branch }} />
+          <col style={{ width: columnWidths.age, minWidth: COLUMN_MIN_WIDTHS.age }} />
+          <col style={{ width: columnWidths.reviewers, minWidth: COLUMN_MIN_WIDTHS.reviewers }} />
+          <col style={{ width: columnWidths.codeOwner, minWidth: COLUMN_MIN_WIDTHS.codeOwner }} />
+          <col
+            style={{
+              width: columnWidths.teamApprovals,
+              minWidth: COLUMN_MIN_WIDTHS.teamApprovals,
+            }}
+          />
+          <col style={{ width: columnWidths.link, minWidth: COLUMN_MIN_WIDTHS.link }} />
+        </colgroup>
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
-            <th className="px-4 py-3 text-left font-medium text-gray-600">#</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-600">Repo</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-600">Title</th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                #
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("number")}
+                  onMouseDown={(e) => startResize("number", e)}
+                />
+              </div>
+            </th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                Repo
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("repo")}
+                  onMouseDown={(e) => startResize("repo", e)}
+                />
+              </div>
+            </th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                Title
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("title")}
+                  onMouseDown={(e) => startResize("title", e)}
+                />
+              </div>
+            </th>
             <SortableHeader
               label="Author"
+              column="author"
               field="author"
               currentSort={sortBy}
               sortOrder={sortOrder}
               onSort={onSort}
+              onResizeStart={startResize}
             />
-            <th className="px-4 py-3 text-left font-medium text-gray-600">Branch</th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                Branch
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("branch")}
+                  onMouseDown={(e) => startResize("branch", e)}
+                />
+              </div>
+            </th>
             <SortableHeader
               label="Age"
+              column="age"
               field="age"
               currentSort={sortBy}
               sortOrder={sortOrder}
               onSort={onSort}
+              onResizeStart={startResize}
             />
             <SortableHeader
               label="Reviewers"
+              column="reviewers"
               field="reviewers"
               currentSort={sortBy}
               sortOrder={sortOrder}
               onSort={onSort}
+              onResizeStart={startResize}
             />
-            <th className="px-4 py-3 text-left font-medium text-gray-600">Code Owner</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-600">Team Approvals</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-600">Link</th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                Code Owner
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("codeOwner")}
+                  onMouseDown={(e) => startResize("codeOwner", e)}
+                />
+              </div>
+            </th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                Team Approvals
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("teamApprovals")}
+                  onMouseDown={(e) => startResize("teamApprovals", e)}
+                />
+              </div>
+            </th>
+            <th className="relative whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600">
+              <div className="flex items-center justify-between gap-2">
+                Link
+                <ResizeHandle
+                  enabled={RESIZABLE_COLUMNS.includes("link")}
+                  onMouseDown={(e) => startResize("link", e)}
+                />
+              </div>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -82,13 +251,13 @@ export function PRTable({
                 selectedPR === pr.number ? "bg-purple-50" : ""
               }`}
             >
-              <td className="px-4 py-3 font-mono text-xs text-gray-500">
+              <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-500">
                 #{pr.number}
               </td>
-              <td className="px-4 py-3 font-mono text-xs text-gray-500">
+              <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-500">
                 {pr.repository}
               </td>
-              <td className="max-w-xs px-4 py-3 font-medium text-gray-900">
+              <td className="px-4 py-3 font-medium text-gray-900">
                 <div className="flex items-center gap-2 truncate">
                   <span className="truncate">{pr.title}</span>
                   {pr.unresolved_comment_count > 0 && (
@@ -105,31 +274,33 @@ export function PRTable({
                 </div>
               </td>
               <td className="px-4 py-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 whitespace-nowrap">
                   <img
                     src={pr.author.avatar_url}
                     alt={pr.author.username}
                     className="h-5 w-5 rounded-full"
                   />
-                  <span className="text-gray-700">{pr.author.username}</span>
+                  <span className="truncate text-gray-700" title={pr.author.display_name || pr.author.username}>
+                    {pr.author.display_name || pr.author.username}
+                  </span>
                 </div>
               </td>
-              <td className="px-4 py-3">
+              <td className="whitespace-nowrap px-4 py-3">
                 <BranchTypeBadge branchType={pr.branch_type} />
               </td>
-              <td className="px-4 py-3">
+              <td className="whitespace-nowrap px-4 py-3">
                 <AgeBadge age={pr.age} />
               </td>
-              <td className="px-4 py-3 text-center text-gray-700">
+              <td className="whitespace-nowrap px-4 py-3 text-center text-gray-700">
                 {pr.active_reviewers_count}
               </td>
-              <td className="px-4 py-3">
+              <td className="whitespace-nowrap px-4 py-3">
                 <CodeOwnerBadge status={pr.code_owner_status} branchType={pr.branch_type} />
               </td>
-              <td className="px-4 py-3">
+              <td className="whitespace-nowrap px-4 py-3">
                 <TeamApprovalsBadge teamApprovals={pr.team_approvals} />
               </td>
-              <td className="px-4 py-3">
+              <td className="whitespace-nowrap px-4 py-3">
                 <a
                   href={pr.html_url}
                   target="_blank"
@@ -150,32 +321,69 @@ export function PRTable({
 
 interface SortableHeaderProps {
   label: string;
+  column: ColumnKey;
   field: SortField;
   currentSort: SortField;
   sortOrder: SortOrder;
   onSort: (field: SortField) => void;
+  onResizeStart: (column: ColumnKey, event: React.MouseEvent<HTMLSpanElement>) => void;
 }
 
-function SortableHeader({ label, field, currentSort, sortOrder, onSort }: SortableHeaderProps) {
+function SortableHeader({
+  label,
+  column,
+  field,
+  currentSort,
+  sortOrder,
+  onSort,
+  onResizeStart,
+}: SortableHeaderProps) {
   const isActive = currentSort === field;
 
   return (
     <th
-      className="cursor-pointer px-4 py-3 text-left font-medium text-gray-600 hover:text-gray-900"
+      className="relative cursor-pointer whitespace-nowrap px-4 py-3 text-left font-medium text-gray-600 hover:text-gray-900"
       onClick={() => onSort(field)}
     >
-      <div className="inline-flex items-center gap-1">
-        {label}
-        {isActive ? (
-          sortOrder === "desc" ? (
-            <ArrowDown className="h-3 w-3" />
+      <div className="flex items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-1">
+          {label}
+          {isActive ? (
+            sortOrder === "desc" ? (
+              <ArrowDown className="h-3 w-3" />
+            ) : (
+              <ArrowUp className="h-3 w-3" />
+            )
           ) : (
-            <ArrowUp className="h-3 w-3" />
-          )
-        ) : (
-          <ArrowUpDown className="h-3 w-3 opacity-40" />
-        )}
+            <ArrowUpDown className="h-3 w-3 opacity-40" />
+          )}
+        </div>
+        <ResizeHandle
+          enabled={RESIZABLE_COLUMNS.includes(column)}
+          onMouseDown={(event) => onResizeStart(column, event)}
+        />
       </div>
     </th>
+  );
+}
+
+interface ResizeHandleProps {
+  enabled: boolean;
+  onMouseDown: (event: React.MouseEvent<HTMLSpanElement>) => void;
+}
+
+function ResizeHandle({ enabled, onMouseDown }: ResizeHandleProps) {
+  if (!enabled) {
+    return null;
+  }
+
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      className="-mr-2 h-5 w-2 cursor-col-resize rounded-sm bg-transparent transition-colors hover:bg-slate-300"
+      onMouseDown={onMouseDown}
+      onClick={(event) => event.stopPropagation()}
+    />
   );
 }
